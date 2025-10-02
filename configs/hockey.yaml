@@ -1,0 +1,43 @@
+pretrained_model_path: "C:/Users/17193/Downloads/stable-diffusion-2-1-base"
+output_dir: "./outputs/car-turn"
+
+train_data:
+  video_path: "data/hockey.mp4"
+  depth_path: "data/depths/hockey_24.pt"
+  prompt: "a man on roller skates is playing hockey"
+  n_sample_frames: 24
+  width: 512
+  height: 512
+  sample_start_idx: 0
+  sample_frame_rate: 1
+
+validation_data:
+  prompts:
+    - "iron man on roller skates is playing hockey"
+    - "a man on roller skates is playing hockey"
+    - "spiderman on roller skates is playing hockey"
+  video_length: 24
+  width: 512
+  height: 512
+  num_inference_steps: 50
+  guidance_scale: 12.5
+  use_inv_latent: True
+  num_inv_steps: 50
+
+learning_rate: 3e-5
+train_batch_size: 1
+max_train_steps: 500
+checkpointing_steps: 1000
+validation_steps: 100
+trainable_modules:
+  - "attn1.to_q"
+  - "attn2.to_q"
+  - "attn_temp"
+  - "depth_adapter"
+  - "graphencoder"
+
+seed: 33
+mixed_precision: fp16
+use_8bit_adam: False
+gradient_checkpointing: True
+enable_xformers_memory_efficient_attention: True

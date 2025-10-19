@@ -31,6 +31,8 @@ from einops import rearrange
 from gnn.GraphEncoder import GaussianGraphEncoder
 from utils.tensor_img import *
 from torch.utils.tensorboard import SummaryWriter
+from aop.mask_aop import *
+from utils.black_white_mask import *
 
 
 # Will error if the minimal version of diffusers is not installed. Remove at your own risks.
@@ -272,21 +274,26 @@ def main(
             with accelerator.accumulate(unet):
                 # Convert videos to latent space
                 pixel_values = batch["pixel_values"].to(weight_dtype)
+                # mask为单通道图，只包含0， 1
                 mask = torch.load("data/mask/libby.pt").to(weight_dtype).to("cuda")
-
+                video_length = pixel_values.shape[1]
+                pixel_values = rearrange(pixel_values, "b f c h w -> (b f) c h w")
                 # back = pixel_values * (1 - mask)
                 # front = pixel_values * mask
-
+                double_mask(pixel_values, mask)
                 # depth = batch["depth"].to(weight_dtype)
                 # gaussian_graph = build_graph_from_gaussians().to("cuda")
                 # depth = graphencoder(gaussian_graph)
                 depth = None
-                video_length = pixel_values.shape[1]
-                pixel_values = rearrange(pixel_values, "b f c h w -> (b f) c h w")
                 latents = vae.encode(pixel_values).latent_dist.sample()
                 # latents = torch.randn((24, 4, 64, 64), dtype=torch.float16, device='cuda')
                 latents = rearrange(latents, "(b f) c h w -> b c f h w", f=video_length)
                 latents = latents * 0.18215
+
+                latents_input = ComparingMask(pixel_values, mask, vae, video_length)
+
+                # print("latents_ori.shape", latents.shape)
+                # print("latents.shape", latents_input.shape)
 
                 #----------------------------------------------------------------------------------------
                 # mask_latent = mask.permute(0, 2, 1, 3, 4)  # (N, 1, D, H_orig, W_orig)
@@ -328,7 +335,7 @@ def main(
                     raise ValueError(f"Unknown prediction type {noise_scheduler.prediction_type}")
 
                 # Predict the noise residual and compute loss
-                model_pred = unet(noisy_latents, timesteps, encoder_hidden_states, depth=depth).sample
+                model_pred = unet(latents_input, timesteps, encoder_hidden_states, depth=depth).sample
 
                 # 6) Masked loss: 只对前景计算主要 loss；可选加背景强约束项--------------------------
                 # 先计算前景 MSE（按像素平均）
@@ -351,30 +358,30 @@ def main(
                 # else:
                 #     loss = loss_fg
                 # --------------------------------------------------------------------------
-                mask_latent = mask.permute(0, 2, 1, 3, 4)  # (N, 1, D, H_orig, W_orig)
-
-                # 重复通道以匹配 latents
-                mask_latent = mask_latent.repeat(1, latents.shape[1], 1, 1, 1)  # (N, C, D, H_orig, W_orig)
-
-                # 对空间维度 H, W 做插值，保持 D 不变
-                N, C, D, H, W = latents.shape
-                mask_latent_reshaped = mask_latent.reshape(N * C * D, 1, mask_latent.shape[-2], mask_latent.shape[-1])
-                mask_latent_reshaped = F.interpolate(mask_latent_reshaped, size=(H, W), mode="nearest")
-                mask_latent = mask_latent_reshaped.reshape(N, C, D, H, W)
-
-                loss_front = F.mse_loss((model_pred * mask_latent).float(),
-                                        (target * mask_latent).float())
-                loss_back = F.mse_loss((model_pred * (1 - mask_latent)).float(),
-                                       (target * (1 - mask_latent)).float())
-
-                loss = loss_front + 0.1 * loss_back
+                # mask_latent = mask.permute(0, 2, 1, 3, 4)  # (N, 1, D, H_orig, W_orig)
+                #
+                # # 重复通道以匹配 latents
+                # mask_latent = mask_latent.repeat(1, latents.shape[1], 1, 1, 1)  # (N, C, D, H_orig, W_orig)
+                #
+                # # 对空间维度 H, W 做插值，保持 D 不变
+                # N, C, D, H, W = latents.shape
+                # mask_latent_reshaped = mask_latent.reshape(N * C * D, 1, mask_latent.shape[-2], mask_latent.shape[-1])
+                # mask_latent_reshaped = F.interpolate(mask_latent_reshaped, size=(H, W), mode="nearest")
+                # mask_latent = mask_latent_reshaped.reshape(N, C, D, H, W)
+                #
+                # loss_front = F.mse_loss((model_pred * mask_latent).float(),
+                #                         (target * mask_latent).float())
+                # loss_back = F.mse_loss((model_pred * (1 - mask_latent)).float(),
+                #                        (target * (1 - mask_latent)).float())
+                #
+                # loss = loss_front + 0.1 * loss_back
 
                 # 保存 loss
                 # writer.add_scalar('Loss/Front', loss_front.item(), epoch)
                 # writer.add_scalar('Loss/Back', loss_back.item(), epoch)
 
 
-                # loss = F.mse_loss(model_pred.float(), target.float(), reduction="mean")
+                loss = F.mse_loss(model_pred.float(), target.float(), reduction="mean")
                 # writer.add_scalar('Loss/loss_fg', loss_fg.item(), epoch)
                 # writer.add_scalar('Loss/Ori', loss.item(), epoch)
 

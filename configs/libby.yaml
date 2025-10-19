@@ -36,6 +36,7 @@ trainable_modules:
   - "attn_temp"
   - "attn3"
   - "depth_proj_dict"
+  - "conv_in_8"
 
 seed: 33
 mixed_precision: fp16

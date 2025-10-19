@@ -86,6 +86,16 @@ class UNet3DConditionModel(ModelMixin, ConfigMixin):
         # input
         self.conv_in = InflatedConv3d(in_channels, block_out_channels[0], kernel_size=3, padding=(1, 1))
 
+        self.conv_in_8 = InflatedConv3d(
+            8,  # 论文要求：双变体拼接后的通道数（4×2）
+            block_out_channels[0],
+            kernel_size=3,
+            padding=(1, 1),
+        )
+        self.conv_in_8.weight.data = torch.cat([self.conv_in.weight.data, self.conv_in.weight.data], dim=1)
+        if self.conv_in.bias is not None:
+            self.conv_in_8.bias.data = self.conv_in.bias.data
+
         # time
         self.time_proj = Timesteps(block_out_channels[0], flip_sin_to_cos, freq_shift)
         timestep_input_dim = block_out_channels[0]
@@ -217,6 +227,8 @@ class UNet3DConditionModel(ModelMixin, ConfigMixin):
         #     use_conv=False
         # ).to(torch.float16)
         self.depth_adapter = DepthFeatureExtractor(cin=1, channels=[320, 640, 1280, 1280], attn_positions=[0, 1, 2])
+
+
 
     def set_attention_slice(self, slice_size):
         r"""
@@ -368,7 +380,10 @@ class UNet3DConditionModel(ModelMixin, ConfigMixin):
             emb = emb + class_emb
 
         # pre-process
-        sample = self.conv_in(sample)
+        if sample.shape[1] == 8:
+            sample = self.conv_in_8(sample)
+        else:
+            sample = self.conv_in(sample)
 
         # down
         down_block_res_samples = (sample,)
